@@ -1,4 +1,4 @@
-# Fitting Tweedie's compound Poisson model to pure premium with the EM algorithm
+# The R code for “Fitting Tweedie's compound Poisson model to pure premium with the EM algorithm”
 
 Abstract: We consider the situation when the number of claims is unavailable, and a Tweedie’s
 compound Poisson model is fitted to the observed pure premium. Currently, there are two
