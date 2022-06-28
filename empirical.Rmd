@@ -1,0 +1,416 @@
+---
+title: "Simulation"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+# conditional distribution and unit deviance (used in the DGLM)
+
+```{r}
+rm(list = ls())
+library(mvtnorm)
+library(tweedie)
+library(statmod)
+fig.up<-F
+cut_e1<-0
+cut_e2<-500
+
+
+unit_d<-function(Y,mu,p,e){
+  # this is the unit deviance in the tweedie CP model
+  2*e*(Y^(2-p)/(1-p)/(2-p)-Y*mu^(1-p)/(1-p)+mu^(2-p)/(2-p))
+}
+
+condi_n<-function(Y,N,e,lambda,alpha,tau){
+  # this is the conditional distribution of N given Y
+  if (Y==0){
+    cond<-dpois(N,Y)
+  }
+  if (Y>0){
+    p<-(alpha+2)/(alpha+1)
+    mu<-lambda*tau
+    phi<-(lambda^(1-p))*(tau^(2-p))/(2-p)
+    if (N==0) {cond<-0}
+    if (N>0){
+      cond<-dpois(N,lambda*e)*dgamma(Y,shape = N*alpha, scale=tau/(alpha*e))/dtweedie(Y, power=p,mu=mu,phi=phi/e)
+    }
+  }
+  cond
+}
+
+condi_n(Y=0,N=0,e=1,lambda=0.25,alpha=1,tau=500)
+condi_n(Y=0,N=1,e=1,lambda=0.25,alpha=1,tau=500)
+```
+
+# data description
+## preprocessing
+```{r}
+library(CASdatasets)
+data(swmotorcycle)
+str(swmotorcycle)
+mcdata<-swmotorcycle
+mcdata$OwnerAge<-pmin(70,mcdata$OwnerAge)
+mcdata$Gender<-as.factor(mcdata$Gender)
+mcdata$Area<-as.factor(mcdata$Area)
+mcdata$Area<-factor(mcdata$Area,levels(mcdata$Area)[c(1,7,3,6,5,4,2)])
+mcdata$Area<-c("Zone1","Zone2","Zone3","Zone4","Zone5","Zone5","Zone5")[as.integer(mcdata$Area)]
+mcdata$Area<-as.factor(mcdata$Area)
+mcdata$Area<-as.integer(mcdata$Area)
+mcdata$RiskClass<-as.factor(mcdata$RiskClass)
+mcdata$RiskClass<-factor(mcdata$RiskClass,levels(mcdata$RiskClass)[c(1,6,7,3,4,5,2)])
+mcdata$RiskClass<-as.integer(mcdata$RiskClass)
+mcdata$RiskClass<-pmin(6,mcdata$RiskClass)
+mcdata$VehAge<-pmin(20,mcdata$VehAge)
+mcdata$BonusClass<-as.integer(as.factor(mcdata$BonusClass))
+
+mcdata<-mcdata[which(mcdata$OwnerAge>=18),]
+mcdata<-mcdata[which(mcdata$Exposure>cut_e1),]
+mcdata<-mcdata[which(mcdata$Exposure<cut_e2),]
+
+mcdata$Y<-0
+mcdata$sev<-0
+mcdata$Y[mcdata$ClaimAmount>0]<-mcdata$ClaimAmount[mcdata$ClaimAmount>0]/mcdata$Exposure[mcdata$ClaimAmount>0]
+mcdata$sev[mcdata$ClaimAmount>0]<-mcdata$ClaimAmount[mcdata$ClaimAmount>0]/mcdata$ClaimNb[mcdata$ClaimAmount>0]
+str(mcdata)
+summary(mcdata)
+mean(mcdata$Exposure)
+sum(mcdata$ClaimAmount==0)/nrow(mcdata)
+sum(mcdata$ClaimNb)/sum(mcdata$Exposure)
+sum(mcdata$ClaimAmount)/sum(mcdata$ClaimNb)
+sum(mcdata$ClaimAmount)/sum(mcdata$Exposure)
+mean(mcdata$Y)
+mcdata$O<-as.integer(mcdata$Y>0)
+sum(mcdata$O==1)/sum(mcdata$Exposure)
+sum(mcdata$ClaimAmount)/sum(mcdata$O==1)
+sum(mcdata$O==1)
+
+sum(mcdata$Exposure<1)
+summary(mcdata$Y[mcdata$Exposure<1])
+
+plot(mcdata$Exposure[mcdata$Y>0&mcdata$Exposure<1],log(mcdata$Y[mcdata$Y>0&mcdata$Exposure<1]))
+plot(mcdata$Exposure[mcdata$Y>0&mcdata$Exposure<1],log(mcdata$ClaimAmount[mcdata$Y>0&mcdata$Exposure<1]))
+
+sum(mcdata$O==1)
+```
+
+## figures
+
+```{r}
+mcdata$OwnerAge_R<-round(mcdata$OwnerAge/5,0)*5
+age_agg<-aggregate(cbind(Exposure,O,ClaimAmount) ~ OwnerAge_R, data=mcdata, sum)
+gender_agg<-aggregate(cbind(Exposure,O,ClaimAmount) ~ Gender, data=mcdata, sum)
+area_agg<-aggregate(cbind(Exposure,O,ClaimAmount) ~ Area, data=mcdata, sum)
+risk_agg<-aggregate(cbind(Exposure,O,ClaimAmount) ~ RiskClass, data=mcdata, sum)
+mcdata$VehAge_R<-round(mcdata$VehAge/5,0)*5
+veh_agg<-aggregate(cbind(Exposure,O,ClaimAmount) ~ VehAge_R, data=mcdata, sum)
+bus_agg<-aggregate(cbind(Exposure,O,ClaimAmount) ~ BonusClass, data=mcdata, sum)
+
+range(c(age_agg$Exposure,
+        area_agg$Exposure,
+        risk_agg$Exposure,
+        veh_agg$Exposure,
+        bus_agg$Exposure))
+ylim1<-c(0,32600)
+  
+range(c(age_agg$O/age_agg$Exposure,
+        area_agg$O/area_agg$Exposure,
+        risk_agg$O/risk_agg$Exposure,
+        veh_agg$O/veh_agg$Exposure,
+        bus_agg$O/bus_agg$Exposure))
+ylim2<-c(0,0.035)
+
+range(log(mcdata$ClaimAmount[mcdata$ClaimAmount>0]))
+ylim3<-c(2.5,13)
+
+if (fig.up==T){
+  png("./plots/empirical/e_age.png")
+  barplot(age_agg$Exposure,names.arg = age_agg$OwnerAge_R, ylab="exposure",xlab="age of driver",ylim=ylim1)
+  box()
+  dev.off()
+
+  png("./plots/empirical/o_age.png")
+  plot(age_agg$OwnerAge_R,age_agg$O/age_agg$Exposure,type="b",xlab="age of driver",ylab="claim occurrence",ylim=ylim2)
+  dev.off()
+  
+  png("./plots/empirical/s_age.png")
+  boxplot(log(ClaimAmount) ~ OwnerAge_R,data=mcdata[mcdata$Y>0,],xlab="age of driver",ylab="logged claim amount",ylim=ylim3)
+  abline(h=mean(log(mcdata[mcdata$Y>0,"Y"])),lty=2)
+  dev.off()
+  
+  png("./plots/empirical/e_gender.png")
+  barplot(gender_agg$Exposure,names.arg = gender_agg$Gender, ylab="exposure",xlab="gender")
+  box()
+  dev.off()
+
+  png("./plots/empirical/o_gender.png")
+  plot(as.integer(gender_agg$Gender),gender_agg$O/gender_agg$Exposure,type="b",xlab="gender",ylab="claim occurrence",ylim=ylim2)
+  dev.off()
+  
+  png("./plots/empirical/s_gender.png")
+  boxplot(log(ClaimAmount) ~ Gender,data=mcdata[mcdata$Y>0,],xlab="gender",ylab="logged claim amount",ylim=ylim3)
+  abline(h=mean(log(mcdata[mcdata$Y>0,"Y"])),lty=2)
+  dev.off()
+  
+  png("./plots/empirical/e_area.png")
+  barplot(area_agg$Exposure,names.arg=area_agg$Area,xlab="area",ylab="exposure",ylim = ylim1)
+  box()
+  dev.off()
+  
+  png("./plots/empirical/o_area.png")
+  plot(area_agg$Area,area_agg$O/area_agg$Exposure,xlab="area",ylab="claim occurrence",ylim=ylim2,type="b")
+  dev.off()
+
+  png("./plots/empirical/s_area.png")
+  boxplot(log(ClaimAmount) ~ Area,data=mcdata[mcdata$Y>0,],xlab="area",ylab="logged claim amount",ylim=ylim3)
+  abline(h=mean(log(mcdata[mcdata$Y>0,"Y"])),lty=2)
+  dev.off()
+  
+  png("./plots/empirical/e_risk.png")
+  barplot(risk_agg$Exposure,names.arg = risk_agg$RiskClass,xlab="risk class",ylab="exposure",ylim=ylim1)
+  box()
+  dev.off()
+
+  png("./plots/empirical/o_risk.png")
+  plot(risk_agg$RiskClass,risk_agg$O/risk_agg$Exposure,type="b",xlab="risk class",ylab="claim occurrence",ylim=ylim2)
+  dev.off()
+
+  png("./plots/empirical/s_risk.png")
+  boxplot(log(ClaimAmount) ~ RiskClass,data=mcdata[mcdata$Y>0,],xlab="risk class", ylab="logged claim amount",ylim=ylim3)
+  abline(h=mean(log(mcdata[mcdata$Y>0,"Y"])),lty=2)
+  dev.off()
+  
+  png("./plots/empirical/e_veh.png")
+  barplot(veh_agg$Exposure,names.arg = veh_agg$VehAge_R,xlab="vehicle age",ylab="exposure",ylim=ylim1)
+  box()
+  dev.off()
+  
+  png("./plots/empirical/o_veh.png")
+  plot(veh_agg$VehAge_R,veh_agg$O/veh_agg$Exposure,type="b",xlab="vehicle age", ylab="claim occurrence",ylim=ylim2)
+  dev.off()
+  
+  png("./plots/empirical/s_veh.png")
+  boxplot(log(ClaimAmount) ~ VehAge_R,data=mcdata[mcdata$Y>0,],xlab="vehicle age",ylab="logged claim amount", ylim=ylim3)
+  abline(h=mean(log(mcdata[mcdata$Y>0,"Y"])),lty=2)
+  dev.off()
+  
+  png("./plots/empirical/e_bus.png")
+  barplot(bus_agg$Exposure,names.arg = bus_agg$BonusClass,xlab="bonus class",ylab="exposure",ylim=ylim1)
+  box()
+  dev.off()
+
+  png("./plots/empirical/o_bus.png")
+  plot(bus_agg$BonusClass,bus_agg$O/bus_agg$Exposure,type="b",xlab="bonus class", ylab="claim occurrence",ylim=ylim2)
+  dev.off()
+  
+  png("./plots/empirical/s_bus.png")
+  boxplot(log(ClaimAmount) ~ BonusClass,data=mcdata[mcdata$Y>0,],xlab="bonus class", ylab="logged claim amount",ylim=ylim3)
+  abline(h=mean(log(mcdata[mcdata$Y>0,"Y"])),lty=2)
+  dev.off()
+
+}
+```
+
+# N is known
+
+## Poisson-gamma GLM 
+```{r}
+names(mcdata)
+glm_poi0<-glm(ClaimNb ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge + Gender + BonusClass + offset(log(Exposure)), family = poisson(link = "log"), data=mcdata)
+
+glm_gam0<-glm(Y ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge + Gender + BonusClass + offset(log(ClaimNb/Exposure)), family=Gamma(link="log"),  weights=ClaimNb ,data = mcdata[mcdata$ClaimAmount>0,])
+
+summary(glm_poi0)
+summary(glm_gam0)
+
+mcdata$hat_lambda<-predict(glm_poi0,newdata=mcdata,type="response")/mcdata$Exposure
+mcdata$hat_tau<-predict(glm_gam0,newdata=data.frame(mcdata[,1:6],Exposure=1,ClaimNb=1),type="response")
+mcdata$hat_mu<-mcdata$hat_lambda*mcdata$hat_tau
+
+yind0<-which(mcdata$Y>0)
+logL_alpha<-function(alpha){
+    sum((alpha*mcdata$ClaimNb[yind0]*(log(mcdata$Y[yind0])-log(mcdata$hat_tau[yind0])+log(alpha*mcdata$Exposure[yind0]))-alpha*mcdata$Y[yind0]*mcdata$Exposure[yind0]/mcdata$hat_tau[yind0]-lgamma(alpha*mcdata$ClaimNb[yind0])))
+  }
+(hat_alpha<- optimise(logL_alpha, maximum = T,interval = c(0, 10))$maximum)
+(hat_p <- (hat_alpha+2)/(hat_alpha+1))
+mcdata$hat_phi<-mcdata$hat_lambda^(1-hat_p)*mcdata$hat_tau^(2-hat_p)/(2-hat_p)
+mcdata$logL_poi_gam<- -log(dtweedie(mcdata$Y,xi=hat_p,mu=mcdata$hat_mu, phi=mcdata$hat_phi/mcdata$Exposure))
+
+(loss_poi_gam<-mean(mcdata$logL_poi_gam))
+```
+
+# N is unknown
+## Tweedie GLM with constant dispersion
+```{r}
+p_trail<-hat_p
+p_trail<-seq(1.60,1.64,0.01)
+loss_tw<-rep(NA,length(p_trail))
+for (k in 1:length(p_trail)){
+  p_try<-p_trail[k]
+  tw_model<-glm(Y ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge + Gender + BonusClass, weights=Exposure, family = tweedie(var.power=p_try,link.power=0), data = mcdata, maxit=5000)
+  mcdata$tw_mu<-predict(tw_model,newdata = mcdata,type="response")
+  mcdata$tw_phi<-summary(tw_model)$dispersion
+  #mcdata$tw_phi<-mean(residuals(tw_model,type="deviance")^2)
+  mcdata$logL_tw<--log(dtweedie(mcdata$Y,xi=p_try,mu=mcdata$tw_mu, phi=mcdata$tw_phi/mcdata$Exposure))
+  loss_tw[k]<-mean(mcdata$logL_tw)
+  print(c(k,p_try,loss_tw[k]))
+}
+loss_tw
+
+round(summary(tw_model)$coef,4)
+# write.csv(round(summary(tw_model)$coef,4),"./plots/empirical/tw_coef.csv")
+
+
+mean(residuals(tw_model,type="pearson")^2)
+mean(residuals(tw_model,type="deviance")^2)
+cor(residuals(tw_model,type="pearson")^2,residuals(tw_model,type="deviance")^2)
+cor(residuals(tw_model,type="deviance")^2,unit_d(Y=mcdata$Y,mu=mcdata$tw_mu,p=p_try,e=mcdata$Exposure))
+#plot(cbind(residuals(tw_model,type="pearson")^2,residuals(tw_model,type="deviance")^2))
+#plot(cbind(residuals(tw_model,type="pearson"),residuals(tw_model,type="deviance")^2))
+try_0<-lm(I(residuals(tw_model,type="pearson"))~I(residuals(tw_model,type="deviance")^2))
+summary(try_0)
+coef(try_0)
+loss_poi_gam
+min(loss_tw)
+p_trail[which.min(loss_tw)]
+```
+
+## DGLM
+```{r}
+p_trail<-hat_p
+# p_trail<-seq(1.45,1.50,0.01)
+loss_DGLM<-rep(NA,length(p_trail))
+TT=4
+for (k in 1:length(p_trail)){
+  p_try<-p_trail[k]
+  dglm_model1<-glm(Y ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge + Gender + BonusClass, weights=Exposure, family = tweedie(var.power=p_try,link.power=0), data = mcdata, maxit=5000)
+  mcdata$dglm_mu<-predict(dglm_model1,newdata = mcdata, type="response")
+  for (t in 1:TT){
+  mcdata$dglm_d<-unit_d(Y=mcdata$Y,mu=mcdata$dglm_mu,p=p_try,e=mcdata$Exposure)
+  mcdata$dglm_d<-mcdata$dglm_d/(1-influence(dglm_model1)$hat)
+  dglm_model2<-glm(dglm_d ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge +  I(VehAge^2) + Gender + BonusClass, family = Gamma(link="log"), weights=I(1-influence(dglm_model1)$hat), data = mcdata, maxit=5000)
+  #dglm_model2<-glm(dglm_d ~ 1, family = Gamma(link="log"), weights=I(1-influence(dglm_model1)$hat), data = mcdata, maxit=5000)
+  mcdata$dglm_phi<-predict(dglm_model2, newdata =mcdata, type="response")
+  
+  mcdata$dglm_w<-mcdata$Exposure/mcdata$dglm_phi
+  dglm_model1<-glm(Y ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge + I(VehAge^2) + Gender + BonusClass, weights=dglm_w, family = tweedie(var.power=p_try,link.power=0), data = mcdata,maxit=5000)
+  mcdata$dglm_mu<-predict(dglm_model1,newdata = mcdata, type="response")
+
+  mcdata$logL_dglm<- -log(dtweedie(mcdata$Y,power=p_try,mu=mcdata$dglm_mu, phi=mcdata$dglm_phi/mcdata$Exposure))
+  loss_tmp<-mean(mcdata$logL_dglm)
+  sum(is.infinite(mcdata$logL_dglm))
+  #loss_tmp<-mean(mcdata$logL_dglm[!is.infinite(mcdata$logL_dglm)])
+  
+  print(c(p_try,t,sum(is.infinite(mcdata$logL_dglm)),round(loss_tmp,6)))
+  }
+  loss_DGLM[k]<-loss_tmp
+}
+mcdata[is.infinite(mcdata$logL_dglm),]
+
+summary(dglm_model1)
+summary(dglm_model2)
+mean(residuals(dglm_model1,type="pearson")^2)
+mean(residuals(dglm_model1,type="deviance")^2)
+cor(mcdata$dglm_d,mcdata$dglm_phi)
+mean(mcdata$dglm_phi)
+mean(mcdata$hat_phi)
+
+loss_DGLM
+loss_tw
+loss_poi_gam
+
+cor(mcdata[,c("hat_mu","tw_mu","dglm_mu")],method="pearson")
+#cor(mcdata[,c("hat_mu","tw_mu","dglm_mu")],method="kendall")
+cor(mcdata[,c("hat_mu","tw_mu","dglm_mu")],method="spearman")
+
+cor(mcdata[,c("hat_phi","tw_phi","dglm_phi")],method="pearson")
+#cor(mcdata[,c("hat_phi","tw_phi","dglm_phi")],method="kendall")
+cor(mcdata[,c("hat_phi","tw_phi","dglm_phi")],method="spearman")
+```
+
+## EM algorithm
+```{r}
+mcdata$O<-as.numeric(mcdata$ClaimNb>0)
+em_poi<-glm(O ~ 1 + offset(log(Exposure)), family =poisson(link="log"),data=mcdata)
+em_gam<-glm(Y ~ 1, family = Gamma(link="log"), data=mcdata[mcdata$Y>0,])
+(em_alpha<-1/summary(em_gam)$dispersion)
+
+dat1<-mcdata[mcdata$Y>0,]
+dat1$ClaimNb<-1
+dat2<-mcdata[mcdata$Y>0,]
+dat2$ClaimNb<-2
+dat3<-mcdata[mcdata$Y>0,]
+dat3$ClaimNb<-3
+dat4<-mcdata[mcdata$Y>0,]
+dat4$ClaimNb<-4
+dat5<-mcdata[mcdata$Y>0,]
+dat5$ClaimNb<-5
+dat_aug<-rbind(mcdata[mcdata$Y==0,],dat1,dat2,dat3,dat4,dat5)
+nrow(dat_aug);5*sum(mcdata$Y>0)+sum(mcdata$Y==0)
+
+dat_aug$em_lambda<-predict(em_poi,newdata =dat_aug, type="response")/dat_aug$Exposure
+dat_aug$em_tau<-predict(em_gam, newdata =dat_aug, type="response")
+
+for (t in 1:5){
+dat_aug$cond<-NULL
+  for (i in 1:nrow(dat_aug)){
+    dat_aug$cond[i]<-condi_n(dat_aug$Y[i],dat_aug$ClaimNb[i],dat_aug$Exposure[i],dat_aug$em_lambda[i],em_alpha,dat_aug$em_tau[i])
+  }
+  sum(dat_aug$cond)
+  dat_aug$em_y_weight<-dat_aug$cond*dat_aug$ClaimNb
+  em_poi<-glm(ClaimNb ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge  + Gender + BonusClass + offset(log(Exposure)), weights = cond, family =poisson(link="log"),data=dat_aug)
+  em_gam<-glm(Y ~ OwnerAge + I(OwnerAge^2) + Area + RiskClass + VehAge  + Gender + BonusClass + offset(log(ClaimNb/Exposure)), weights=em_y_weight, family = Gamma(link="log"), data=dat_aug[dat_aug$Y>0,])
+  dat_aug$em_lambda<-predict(em_poi,newdata =dat_aug, type="response")/dat_aug$Exposure
+  dat_aug$em_tau<-predict(em_gam, newdata = data.frame(dat_aug[,1:6],Exposure=1,ClaimNb=1), type="response")
+  # em_alpha<-1/summary(em_gam)$dispersion
+  # mean(residuals(em_gam,type="pearson")^2)
+  # em_alpha<-1.5
+  yind<-which(dat_aug$Y>0)
+  logL_alpha<-function(alpha){
+    sum(dat_aug$cond[yind]*(alpha*dat_aug$ClaimNb[yind]*(log(dat_aug$Y[yind])-log(dat_aug$em_tau[yind])+log(alpha*dat_aug$Exposure[yind]))-alpha*dat_aug$Y[yind]*dat_aug$Exposure[yind]/dat_aug$em_tau[yind]-lgamma(alpha*dat_aug$ClaimNb[yind])))
+  }
+  em_alpha<- optimise(logL_alpha, maximum = T,interval = c(0, 10))$maximum
+  em_p<- (em_alpha+2)/(em_alpha+1)
+  dat_aug$em_mu<-dat_aug$em_lambda*dat_aug$em_tau
+  dat_aug$em_phi <- dat_aug$em_lambda^(1-em_p)*dat_aug$em_tau^(2-em_p)/(2-em_p)
+  dat_aug$logL_em<- -log(dtweedie(dat_aug$Y,xi=em_p,mu=dat_aug$em_mu, phi=dat_aug$em_phi/dat_aug$Exposure))
+  loss_EM<-mean(dat_aug$logL_em[1:nrow(mcdata)])
+  print(round(c(t,em_alpha,em_p,loss_EM),4))
+}
+
+# write.csv(round(summary(em_poi)$coef,4),"./plots/empirical/em_poi.csv")
+# write.csv(round(summary(em_gam)$coef,4),"./plots/empirical/em_gam.csv")
+
+mcdata$em_lambda<-predict(em_poi,newdata =mcdata, type="response")/mcdata$Exposure
+mcdata$em_tau<-predict(em_gam, newdata = data.frame(mcdata[,1:6],Exposure=1,ClaimNb=1), type="response")
+mcdata$em_mu<-mcdata$em_lambda*mcdata$em_tau
+mcdata$em_phi <- mcdata$em_lambda^(1-em_p)*mcdata$em_tau^(2-em_p)/(2-em_p)
+mcdata$logL_em<- -log(dtweedie(mcdata$Y,xi=em_p,mu=mcdata$em_mu, phi=mcdata$em_phi/mcdata$Exposure))
+(loss_EM<-mean(mcdata$logL_em))
+loss_DGLM
+loss_tw
+loss_poi_gam
+
+sum(dat_aug$cond)
+
+(mu_pearson<-cor(mcdata[,c("em_mu","tw_mu","dglm_mu","hat_mu")],method=c("pearson"))[,4])
+#(mu_kendall<-cor(mcdata[,c("em_mu","tw_mu","dglm_mu","hat_mu")],method=c("kendall"))[,4])
+(mu_spearman<-cor(mcdata[,c("em_mu","tw_mu","dglm_mu","hat_mu")],method=c("spearman"))[,4])
+
+(phi_pearson<-cor(mcdata[,c("em_phi","tw_phi","dglm_phi","hat_phi")],method=c("pearson"))[,4])
+#(phi_kendall<-cor(mcdata[,c("em_phi","tw_phi","dglm_phi","hat_phi")],method=c("kendall"))[,4])
+(phi_spearman<-cor(mcdata[,c("em_phi","tw_phi","dglm_phi","hat_phi")],method=c("spearman"))[,4])
+
+# png("./plots/empirical/condi_p.png")
+boxplot(cbind(dat_aug$cond[dat_aug$ClaimNb==1],dat_aug$cond[dat_aug$ClaimNb==2],dat_aug$cond[dat_aug$ClaimNb==3],dat_aug$cond[dat_aug$ClaimNb==4],dat_aug$cond[dat_aug$ClaimNb==5]),xlab="number of claims",ylab="conditional probabilities")
+dev.off()
+
+model_comparison<-round(cbind(c(loss_EM,min(loss_tw),min(loss_DGLM),loss_poi_gam),mu_pearson,mu_kendall,mu_spearman,phi_pearson,phi_kendall,phi_spearman),4)
+model_comparison
+# write.csv(model_comparison,"./plots/empirical/test_loss.csv")
+```
+
+
+
+
+

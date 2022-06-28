@@ -1,0 +1,470 @@
+---
+title: "Simulation"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+# conditional distribution and unit deviance (used in the DGLM)
+
+```{r}
+rm(list = ls())
+library(mvtnorm)
+library(tweedie)
+library(statmod)
+n <-10000*2 # sample size
+fig.up<-F
+set.seed(6)
+e <- runif(n, 4,6)
+# e <- runif(n, 0,2)
+
+unit_d<-function(Y,mu,p,e){
+  # this is the unit deviance in the tweedie CP model
+  2*e*(Y^(2-p)/(1-p)/(2-p)-Y*mu^(1-p)/(1-p)+mu^(2-p)/(2-p))
+}
+
+condi_n<-function(Y,N,e,lambda,alpha,tau){
+  # this is the conditional distribution of N given Y
+  if (Y==0){
+    cond<-dpois(N,Y)
+  }
+  if (Y>0){
+    p<-(alpha+2)/(alpha+1)
+    mu<-lambda*tau
+    phi<-(lambda^(1-p))*(tau^(2-p))/(2-p)
+    if (N==0) {cond<-0}
+    if (N>0){
+      cond<-dpois(N,lambda*e)*dgamma(Y,shape = N*alpha, scale=tau/(alpha*e))/dtweedie(Y, power=p,mu=mu,phi=phi/e)
+    }
+  }
+  cond
+}
+
+condi_n(Y=0,N=0,e=1,lambda=0.25,alpha=1,tau=500)
+condi_n(Y=0,N=1,e=1,lambda=0.25,alpha=1,tau=500)
+
+Y0<-5000
+cond0<-condi_n(Y=Y0,N=0,e=1,lambda=0.25,alpha=1,tau=500)
+cond1<-condi_n(Y=Y0,N=1,e=1,lambda=0.25,alpha=1,tau=500)
+cond2<-condi_n(Y=Y0,N=2,e=1,lambda=0.25,alpha=1,tau=500)
+cond3<-condi_n(Y=Y0,N=3,e=1,lambda=0.25,alpha=1,tau=500)
+cond4<-condi_n(Y=Y0,N=4,e=1,lambda=0.25,alpha=1,tau=500)
+cond0+cond1+cond2+cond3+cond4
+cond0;cond1;cond2;cond3;cond4
+```
+
+# a simulated example
+## underlying model
+```{r}
+homo=F
+set.seed(666)
+x1 <- rnorm(n,0,0.5)
+x2 <- rnorm(n,0,0.5)
+x3 <- rnorm(n,0,0.5)
+x4 <- rnorm(n,0,0.5)
+x5 <- rbinom(n,1,0.5)
+
+# frequency
+# eta <-tanh(x1+0.5*x1^2)-tanh(0.7*(x2))+tanh(0.2*log(x3))-0.5*x4+0.5*x4*tanh(0.7*(x2))-2
+# boxplot(cbind(
+#   tanh(x1+0.5*x1^2),-tanh(0.7*(x2)),+tanh(0.2*log(x3)),-0.5*x4,+0.5*x4*tanh(0.7*(x2))))
+# hist(-tanh(0.7*(x2)+0.5*x4*tanh(0.7*(x2))))
+
+eta <-0.5*tanh(tanh(x1)-tanh(x2)-tanh(x3) + tanh(x4)-0.8*x5) -2
+if (homo==T){
+  eta<-mean(eta)
+}
+lambda <- exp(eta)
+hist(eta)
+hist(lambda)
+
+# severity
+alpha0 <- 1
+(p0 <- (alpha0+2)/(alpha0+1))
+# tau <- exp(sin(1.3*x2)+0.3*x4)*500
+# boxplot(cbind(sin(1.3*x2),0.3*x4))
+# (tau0<- mean(tau))
+zeta<-0.8*tanh(-(x2-1)^2-(x3-1)^2)+log(2000)
+tau <- exp(zeta)
+# pairs(cbind(zeta,x2,x3)[1:1000,])
+if(homo==T){
+  (tau<-mean(tau))
+}
+hist(tau)
+mu<-lambda*tau
+
+mean(lambda)
+mean(tau)
+mean(mu)
+```
+
+## N, S, Y, sev
+```{r}
+dat<-data.frame(N=0,S=0,Y=0,sev=0,e,x1,x2,x3,x4,x5,eta,lambda,alpha=alpha0,zeta,tau,mu)
+dat$mu_log<-log(dat$mu)
+set.seed(666)
+for (i in 1:nrow(dat)){
+  dat$N[i] <- rpois(1,lambda = dat$lambda[i]*dat$e[i])
+  if (dat$N[i]>0){
+    dat$S[i]<-sum(rgamma(dat$N[i],shape = alpha0, scale=dat$tau[i]/alpha0))
+    dat$sev[i]<-dat$S[i]/dat$N[i]
+  }  
+}
+dat$Y<-dat$S/dat$e
+dat$phi <- dat$lambda^(1-p0)*dat$tau^(2-p0)/(2-p0)
+dat$phi_log<-log(dat$phi)
+dat$d<-unit_d(dat$Y,dat$mu,p0,dat$e)
+dd <- 2*dat$phi[dat$Y>0]*(log(dtweedie(dat$Y[dat$Y>0],xi=p0,mu=dat$Y[dat$Y>0],phi=dat$phi[dat$Y>0]/dat$e[dat$Y>0]))- log(dtweedie(dat$Y[dat$Y>0],xi=p0,mu=dat$mu[dat$Y>0],phi=dat$phi[dat$Y>0]/dat$e[dat$Y>0])))
+cor(dat$d[dat$Y>0],dd)
+summary(dat$d)
+hist(dat$d)
+mean(dat$d[dat$Y>0])
+mean(dat$d)
+mean(dat$phi)
+dat$logL<- -log(dtweedie(dat$Y,xi=p0,mu=dat$mu, phi=dat$phi/dat$e))
+dat$w<-dat$e/dat$phi
+
+dat_test<-dat[(n/2+1):n,]
+dat<-dat[1:(n/2),]
+
+(loss_true_test<-mean(dat_test$logL))
+mean(1/dat$w)
+sum(dat$N==0)/nrow(dat)
+
+if (fig.up==T){
+  png("./plots/simulation/lambda.png")
+}
+hist(dat$lambda,xlab="lambda",ylab="frequency",freq = T, main="histogram of true claim frequency")
+abline(v=mean(dat$lambda),lty=2)
+legend("topright",c("average claim frequency"),lty=2)
+box()
+dev.off()
+
+if (fig.up==T){
+  png("./plots/simulation/tau.png")
+}
+hist(dat$tau,xlab="tau",ylab="frequency",freq = T, main="histogram of true claim size")
+abline(v=mean(dat$tau),lty=2)
+legend("topright",c("average claim size"),lty=2)
+box()
+dev.off()
+
+if (fig.up==TRUE){
+  png("./plots/simulation/mu.png")
+}
+hist(dat$mu,xlab="mu",ylab="frequency",freq = T,main="histogram of true pure premium")
+abline(v=mean(dat$mu),lty=2)
+legend("topright",c("average pure premium"),lty=2)
+box()
+dev.off()
+
+if (fig.up==T){
+ png("./plots/simulation/phi.png")
+}
+hist(dat$phi,xlab="phi",ylab="frequency",freq = T,main="histogram of true dispersion")
+abline(v=mean(dat$phi),lty=2)
+legend("topright",c("average dispersion"),lty=2)
+box()
+dev.off()
+
+if (fig.up==T){
+  png("./plots/simulation/pair-eta.png")
+}
+pairs(dat[1:1000,c("eta","x1","x2","x3","x4","x5")])
+dev.off()
+
+if (fig.up==T){
+  png("./plots/simulation/pair-zeta.png")
+}
+pairs(dat[1:1000,c("zeta","x1","x2","x3","x4","x5")])
+dev.off()
+
+if (fig.up==T){
+  png("./plots/simulation/pair-mu.png")
+}
+pairs(dat[1:1000,c("mu_log","x1","x2","x3","x4","x5")])
+dev.off()
+
+if (fig.up==T){
+  png("./plots/simulation/pair-phi.png")
+}
+pairs(dat[1:1000,c("phi_log","x1","x2","x3","x4","x5")])
+dev.off()
+
+plot(dat[1:1000,c("lambda","tau","mu_log","phi_log")])
+```
+
+# N is known
+## Poisson-gamma GLM 
+```{r}
+names(dat)
+glm_poi0<-glm(N ~ x1 + x2 + x3 + x4 + x5 + offset(log(e)), family = poisson(link = "log"),data=dat)
+glm_gam0<-glm(Y ~   x1 + x2 + x3 + x4 + x5 + offset(log(N/e)), weights=N, family = Gamma(link="log"),data = dat[dat$sev>0,])
+summary(glm_poi0)
+summary(glm_gam0)
+
+
+dat$hat_lambda<-predict(glm_poi0,newdata=data.frame(dat[,c("x1","x2","x3","x4","x5")],e=1),type="response")
+dat$hat_tau<-predict(glm_gam0,newdata=data.frame(dat[,c("x1","x2","x3","x4","x5")],e=1,N=1),type="response")
+dat$hat_mu<-dat$hat_lambda*dat$hat_tau
+
+yind0<-which(dat$Y>0)
+logL_alpha<-function(alpha){
+    sum((alpha*dat$N[yind0]*(log(dat$Y[yind0])-log(dat$hat_tau[yind0])+log(alpha*dat$e[yind0]))-alpha*dat$Y[yind0]*dat$e[yind0]/dat$hat_tau[yind0]-lgamma(alpha*dat$N[yind0])))
+  }
+(hat_alpha<- optimise(logL_alpha, maximum = T,interval = c(0, 10))$maximum)
+(hat_p <- (hat_alpha+2)/(hat_alpha+1))
+dat$hat_phi<-dat$hat_lambda^(1-hat_p)*dat$hat_tau^(2-hat_p)/(2-hat_p)
+dat$logL_poi_gam<- -log(dtweedie(dat$Y,xi=hat_p,mu=dat$hat_mu, phi=dat$hat_phi/dat$e))
+
+dat_test$hat_lambda<-predict(glm_poi0,newdata=data.frame(dat_test[,c("x1","x2","x3","x4","x5")],e=1),type="response")
+dat_test$hat_tau<-predict(glm_gam0,newdata=data.frame(dat_test[,c("x1","x2","x3","x4","x5")],e=1,N=1),type="response")
+dat_test$hat_mu<-dat_test$hat_lambda*dat_test$hat_tau
+dat_test$hat_phi<-dat_test$hat_lambda^(1-hat_p)*dat_test$hat_tau^(2-hat_p)/(2-hat_p)
+dat_test$logL_poi_gam<- -log(dtweedie(dat_test$Y,xi=hat_p,mu=dat_test$hat_mu, phi=dat_test$hat_phi/dat_test$e))
+(loss_poi_gam_test<-mean(dat_test$logL_poi_gam))
+loss_true_test
+
+cor(dat_test[,c("mu","hat_mu")],method=c("pearson"))
+cor(dat_test[,c("mu","hat_mu")],method=c("kendall"))
+cor(dat_test[,c("mu","hat_mu")],method=c("spearman"))
+```
+
+# N is unknown
+## Tweedie GLM with constant dispersion
+```{r}
+if (min(e)>2){
+  p_trail<-seq(1.46,1.55,by=0.01)
+}
+if (min(e)<2){
+  p_trail<-seq(1.46,1.55,by=0.01)
+}
+
+loss_tw<-rep(NA,length(p_trail))
+for (k in 1:length(p_trail)){
+  p_try<-p_trail[k]
+  tw_model<-glm(Y ~ x1 + x2 + x3 + x4 + x5, weights=e, family = tweedie(var.power=p_try,link.power=0), data = dat)
+  dat$tw_mu<-predict(tw_model,newdata = data.frame(dat[,c("x1","x2","x3","x4","x5")]),type="response")
+  dat$tw_phi<-summary(tw_model)$dispersion
+  dat$logL_tw<--log(dtweedie(dat$Y,xi=p_try,mu=dat$tw_mu, phi=dat$tw_phi/dat$e))
+  loss_tw[k]<-mean(dat$logL_tw)
+}
+loss_tw
+
+if (fig.up==T&min(e)>2){
+  png("./plots/simulation/profile_tw_e5.png")
+}
+if (fig.up==T&min(e)<2){
+  png("./plots/simulation/profile_tw_e1.png")
+}
+plot(p_trail,loss_tw,type="l",xlab="p",ylab="loss",main="profile loss for p estimation")
+abline(v=p_trail[which.min(loss_tw)],lty=2)
+dev.off()
+p_trail[which.min(loss_tw)]
+
+summary(tw_model)$dispersion
+mean(residuals(tw_model,type="pearson")^2)
+mean(residuals(tw_model,type="deviance")^2)
+dat$tw_d<-unit_d(Y=dat$Y,mu=dat$tw_mu,p=p_try,e=dat$e)
+mean(dat$tw_d)
+cor(residuals(tw_model,type="deviance")^2,dat$tw_d)
+mean(dat$d)
+cor(dat$d,residuals(tw_model,type="deviance")^2)
+cor(dat$d,residuals(tw_model,type="pearson")^2)
+
+tw_model<-glm(Y ~ x1 + x2 + x3 + x4 + x5, weights=e, family = tweedie(var.power=p_trail[which.min(loss_tw)],link.power=0), data = dat)
+dat_test$tw_mu<-predict(tw_model,newdata = data.frame(dat_test[,c("x1","x2","x3","x4","x5")]),type="response")
+dat_test$tw_phi<-summary(tw_model)$dispersion
+dat_test$logL_tw<--log(dtweedie(dat_test$Y,xi=p_trail[which.min(loss_tw)],mu=dat_test$tw_mu, phi=dat_test$tw_phi/dat_test$e))
+(loss_tw_test<-mean(dat_test$logL_tw))
+p_trail[which.min(loss_tw)]
+loss_poi_gam_test
+
+cor(dat_test[,c("mu","hat_mu","tw_mu")],method=c("pearson"))
+cor(dat_test[,c("mu","hat_mu","tw_mu")],method=c("kendall"))
+cor(dat_test[,c("mu","hat_mu","tw_mu")],method=c("spearman"))
+```
+
+## DGLM
+
+```{r}
+res_type<-"deviance"
+
+if (min(e)>2){
+  p_trail<-seq(1.46,1.55,by=0.01)
+}
+if (min(e)<2){
+  p_trail<-seq(1.31,1.40,by=0.01)
+}
+loss_DGLM<-rep(NA,length(p_trail))
+TT=3
+for (k in 1:length(p_trail)){
+  p_try<-p_trail[k]
+  dglm_model1<-glm(Y ~ x1 + x2 + x3 + x4 + x5, weights=e, family = tweedie(var.power=p_try,link.power=0), data = dat)
+  for (t in 1:TT){
+  
+    dat$dglm_mu<-predict(dglm_model1,newdata = dat[,c("x1","x2","x3","x4","x5")],type="response")
+  dat$dglm_d<-unit_d(Y=dat$Y,mu=dat$dglm_mu,p=p_try,e=dat$e)
+  if(res_type=="pearson"){
+    dat$dglm_d<-residuals(dglm_model1,type="pearson")^2
+  }
+  dat$dglm_d<-dat$dglm_d/(1-influence(dglm_model1)$hat)
+
+  dglm_model2<-glm(dglm_d ~ x1 + x2 + x3 + x4 + x5, family = Gamma(link="log"),weights=I(1-influence(dglm_model1)$hat), data = dat,maxit=100)
+  dat$dglm_phi<-predict(dglm_model2, newdata = dat[,c("x1","x2","x3","x4","x5")], type="response")
+  dat$dglm_w<-dat$e/dat$dglm_phi
+  dglm_model1<-glm(Y ~ x1 + x2 + x3 + x4 + x5, weights=dglm_w, family = tweedie(var.power=p_try,link.power=0), data = dat)
+  dat$logL_dglm<- -log(dtweedie(dat$Y,xi=p_try,mu=dat$dglm_mu, phi=dat$dglm_phi/dat$e))
+  loss_tmp<-mean(dat$logL_dglm)
+  print(c(p_try,t,round(loss_tmp,4)))
+  }
+  loss_DGLM[k]<-loss_tmp
+}
+summary(dglm_model1)
+summary(dglm_model2)
+
+if (fig.up==T&min(e)>2){
+  png("./plots/simulation/profile_dglm_e5.png")
+}
+if (fig.up==T&min(e)<2){
+  png("./plots/simulation/profile_dglm_e1.png")
+}
+plot(p_trail,loss_DGLM,type="l",xlab="p",ylab="loss",main="profile loss for p estimation")
+abline(v=p_trail[which.min(loss_DGLM)],lty=2)
+dev.off()
+
+(p_try<-p_trail[which.min(loss_DGLM)])
+  dglm_model1<-glm(Y ~ x1 + x2 + x3 + x4 + x5, weights=e, family = tweedie(var.power=p_try,link.power=0), data = dat)
+  for (t in 1:T){
+  dat$dglm_mu<-predict(dglm_model1,newdata = dat[,c("x1","x2","x3","x4","x5")],type="response")
+  dat$dglm_d<-unit_d(Y=dat$Y,mu=dat$dglm_mu,p=p_try,e=dat$e)
+  if(res_type=="pearson"){
+    dat$dglm_d<-residuals(dglm_model1,type="pearson")^2
+  }
+  dat$dglm_d<-dat$dglm_d/(1-influence(dglm_model1)$hat)
+  
+  dglm_model2<-glm(dglm_d ~  x1 + x2 + x3 + x4 + x5, weights=I(1-influence(dglm_model1)$hat), family = Gamma(link="log"), data = dat)
+  dat$dglm_phi<-predict(dglm_model2, newdata = dat[,c("x1","x2","x3","x4","x5")], type="response")
+  dat$dglm_w<-dat$e/dat$dglm_phi
+  dglm_model1<-glm(Y ~ x1 + x2 + x3 + x4 + x5, weights=dglm_w, family = tweedie(var.power=p_try,link.power=0), data = dat)
+  
+  dat_test$dglm_mu<-predict(dglm_model1,newdata = dat_test[,c("x1","x2","x3","x4","x5")],type="response")
+  dat_test$dglm_phi<-predict(dglm_model2, newdata = dat_test[,c("x1","x2","x3","x4","x5")], type="response")
+  dat_test$logL_dglm<- -log(dtweedie(dat_test$Y,xi=p_try,mu=dat_test$dglm_mu, phi=dat_test$dglm_phi/dat_test$e))
+  loss_DGLM_test<-mean(dat_test$logL_dglm)
+  print(c(loss_DGLM_test))
+  }
+  loss_DGLM_test
+  loss_tw_test
+  loss_poi_gam_test
+  loss_true_test
+  
+
+cor(dat_test[,c("mu","hat_mu","tw_mu","dglm_mu")],method=c("pearson"))
+cor(dat_test[,c("mu","hat_mu","tw_mu","dglm_mu")],method=c("kendall"))
+cor(dat_test[,c("mu","hat_mu","tw_mu","dglm_mu")],method=c("spearman"))
+
+cor(dat_test[,c("tw_phi","dglm_phi","hat_phi","phi")],method=c("pearson"))
+cor(dat_test[,c("tw_phi","dglm_phi","hat_phi","phi")],method=c("kendall"))
+cor(dat_test[,c("tw_phi","dglm_phi","hat_phi","phi")],method=c("spearman"))
+summary(dglm_model1)
+summary(dglm_model2)
+```
+
+## EM algorithm
+```{r}
+dat$O<-as.numeric(dat$N>0)
+em_poi<-glm(O ~ 1 + offset(log(e)), family =poisson(link="log"),data=dat)
+em_gam<-glm(Y ~ 1, family = Gamma(link="log"), data=dat[dat$Y>0,])
+(em_alpha<-1/summary(em_gam)$dispersion)
+
+dat1<-dat[dat$Y>0,]
+dat1$N<-1
+dat2<-dat[dat$Y>0,]
+dat2$N<-2
+dat3<-dat[dat$Y>0,]
+dat3$N<-3
+dat4<-dat[dat$Y>0,]
+dat4$N<-4
+dat5<-dat[dat$Y>0,]
+dat5$N<-5
+dat_aug<-rbind(dat[dat$Y==0,],dat1,dat2,dat3,dat4,dat5)
+nrow(dat_aug);5*sum(dat$Y>0)+sum(dat$Y==0)
+
+dat_aug$em_lambda<-predict(em_poi,newdata = data.frame(dat_aug[,c("x1","x2","x3","x4","x5")],e=1), type="response")
+dat_aug$em_tau<-predict(em_gam, newdata = data.frame(dat_aug[,c("x1","x2","x3","x4","x5")]), type="response")
+
+if (min(e)>2) {TT<-6}
+if (min(e)<2) {TT<-10}
+trace_mat<-matrix(NA,nrow=TT,ncol=3)
+for (t in 1:TT){
+dat_aug$cond<-NULL
+  for (i in 1:nrow(dat_aug)){
+    dat_aug$cond[i]<-condi_n(dat_aug$Y[i],dat_aug$N[i],dat_aug$e[i],dat_aug$em_lambda[i],em_alpha,dat_aug$em_tau[i])
+  }
+  sum(dat_aug$cond)
+  dat_aug$em_y_weight<-dat_aug$cond*dat_aug$N
+  em_poi<-glm(N ~ x1 + x2 + x3 + x4 + x5 + offset(log(e)), weights = cond, family =poisson(link="log"),data=dat_aug)
+  em_gam<-glm(Y ~  x1 + x2 + x3 + x4 + x5 + offset(log(N/e)), weights=em_y_weight, family = Gamma(link="log"), data=dat_aug[dat_aug$Y>0,])
+  dat_aug$em_lambda<-predict(em_poi,newdata = data.frame(dat_aug[,c("x1","x2","x3","x4","x5")],e=1), type="response")
+  dat_aug$em_tau<-predict(em_gam, newdata = data.frame(dat_aug[,c("x1","x2","x3","x4","x5")],N=1,e=1), type="response")
+  # em_alpha<-1/summary(em_gam)$dispersion
+  # mean(residuals(em_gam,type="pearson")^2)
+  # em_alpha<-1.5
+  yind<-which(dat_aug$Y>0)
+  logL_alpha<-function(alpha){
+    sum(dat_aug$cond[yind]*(alpha*dat_aug$N[yind]*(log(dat_aug$Y[yind])-log(dat_aug$em_tau[yind])+log(alpha*dat_aug$e[yind]))-alpha*dat_aug$Y[yind]*dat_aug$e[yind]/dat_aug$em_tau[yind]-lgamma(alpha*dat_aug$N[yind])))
+  }
+  em_alpha<- optimise(logL_alpha, maximum = T,interval = c(0, 10))$maximum
+  em_p<- (em_alpha+2)/(em_alpha+1)
+  dat_aug$em_mu<-dat_aug$em_lambda*dat_aug$em_tau
+  dat_aug$em_phi <- dat_aug$em_lambda^(1-em_p)*dat_aug$em_tau^(2-em_p)/(2-em_p)
+  dat_aug$logL_em<- -log(dtweedie(dat_aug$Y,xi=em_p,mu=dat_aug$em_mu, phi=dat_aug$em_phi/dat_aug$e))
+  loss_EM<-mean(dat_aug$logL_em[1:nrow(dat)])
+  trace_mat[t,]<-c(em_alpha,em_p,loss_EM)
+  print(round(c(t,em_alpha,em_p,loss_EM),4))
+}
+
+#png("./plots/simulation/EM_trace_p.png")
+plot(trace_mat[,2],type="b",xlab="iterations",ylab="p",main="power variance parameter")
+abline(h=1.5,lty=2)
+legend("topright",c("true p"),lty=2)
+dev.off()
+
+#png("./plots/simulation/EM_trace_loss.png")
+plot(trace_mat[,3],type="b",xlab="iterations",ylab="loss",main="average neg log-likelihood")
+dev.off()
+
+# write.csv(round(summary(em_poi)$coef,4),"./plots/simulation/em_poi.csv")
+# write.csv(round(summary(em_gam)$coef,4),"./plots/simulation/em_gam.csv")
+
+dat_test$em_lambda<-predict(em_poi,newdata = data.frame(dat_test[,c("x1","x2","x3","x4","x5")],e=1), type="response")
+dat_test$em_tau<-predict(em_gam, newdata = data.frame(dat_test[,c("x1","x2","x3","x4","x5")],N=1,e=1), type="response")
+dat_test$em_mu<-dat_test$em_lambda*dat_test$em_tau
+dat_test$em_phi <- dat_test$em_lambda^(1-em_p)*dat_test$em_tau^(2-em_p)/(2-em_p)
+dat_test$logL_em<- -log(dtweedie(dat_test$Y,xi=em_p,mu=dat_test$em_mu, phi=dat_test$em_phi/dat_test$e))
+(loss_EM_test<-mean(dat_test$logL_em))
+loss_DGLM_test
+loss_tw_test
+loss_poi_gam_test
+
+
+sum(dat_aug$cond)
+
+(mu_pearson<-cor(dat_test[,c("em_mu","tw_mu","dglm_mu","hat_mu","mu")],method=c("pearson"))[,5])
+(mu_kendall<-cor(dat_test[,c("em_mu","tw_mu","dglm_mu","hat_mu","mu")],method=c("kendall"))[,5])
+(mu_spearman<-cor(dat_test[,c("em_mu","tw_mu","dglm_mu","hat_mu","mu")],method=c("spearman"))[,5])
+
+(phi_pearson<-cor(dat_test[,c("em_phi","tw_phi","dglm_phi","hat_phi","phi")],method=c("pearson"))[,5])
+(phi_kendall<-cor(dat_test[,c("em_phi","tw_phi","dglm_phi","hat_phi","phi")],method=c("kendall"))[,5])
+(phi_spearman<-cor(dat_test[,c("em_phi","tw_phi","dglm_phi","hat_phi","phi")],method=c("spearman"))[,5])
+
+model_comparison<-round(cbind(c(loss_EM_test,loss_tw_test,loss_DGLM_test,loss_poi_gam_test,loss_true_test),mu_pearson,mu_kendall,mu_spearman,phi_pearson,phi_kendall,phi_spearman),4)
+model_comparison
+#write.csv(model_comparison,paste("./plots/simulation/test_loss",round(mean(e),0),".csv",sep=""))
+```
+
+
+
+
+
